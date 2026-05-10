@@ -2,8 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { RecaptchaVerifier, signInWithPhoneNumber, onAuthStateStatusChange, onAuthStateChanged } from 'firebase/auth';
+import { RecaptchaVerifier, signInWithPhoneNumber, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
+
+declare global {
+  interface Window {
+    recaptchaVerifier: RecaptchaVerifier;
+  }
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,7 +18,7 @@ export default function LoginPage() {
   const [step, setStep] = useState<'PHONE_INPUT' | 'OTP_INPUT' | 'SUCCESS'>('PHONE_INPUT');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // To hold the confirmation result object from firebase
   const [confirmationResult, setConfirmationResult] = useState<any>(null);
 
@@ -38,7 +44,7 @@ export default function LoginPage() {
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phoneNumber) return;
-    
+
     setLoading(true);
     setError(null);
 
@@ -46,7 +52,7 @@ export default function LoginPage() {
       const formattedPhone = phoneNumber.startsWith('+') ? phoneNumber : `+91${phoneNumber}`;
       const appVerifier = window.recaptchaVerifier;
       const confirmation = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
-      
+
       setConfirmationResult(confirmation);
       setStep('OTP_INPUT');
     } catch (err: any) {
