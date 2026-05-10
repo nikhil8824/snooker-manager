@@ -221,6 +221,36 @@ export default function LoungeManager() {
     }));
   };
 
+  const removePerson = (sessionId: string) => {
+    setSessions(sessions.map(s => {
+      if (s.id === sessionId) {
+        const timeNow = Date.now();
+        const lastBlock = s.blocks[s.blocks.length - 1];
+        if (lastBlock.peopleCount <= 1) return s;
+        const newBlocks = [...s.blocks];
+        newBlocks[newBlocks.length - 1] = { ...lastBlock, endTime: timeNow };
+        newBlocks.push({ startTime: timeNow, endTime: null, peopleCount: lastBlock.peopleCount - 1 });
+        return { ...s, blocks: newBlocks };
+      }
+      return s;
+    }));
+  };
+
+  const removeTwoPeople = (sessionId: string) => {
+    setSessions(sessions.map(s => {
+      if (s.id === sessionId) {
+        const timeNow = Date.now();
+        const lastBlock = s.blocks[s.blocks.length - 1];
+        if (lastBlock.peopleCount <= 2) return s;
+        const newBlocks = [...s.blocks];
+        newBlocks[newBlocks.length - 1] = { ...lastBlock, endTime: timeNow };
+        newBlocks.push({ startTime: timeNow, endTime: null, peopleCount: lastBlock.peopleCount - 2 });
+        return { ...s, blocks: newBlocks };
+      }
+      return s;
+    }));
+  };
+
   const addItem = (sessionId: string, itemId: string) => {
     setSessions(sessions.map(s => {
       if (s.id === sessionId) {
@@ -397,32 +427,62 @@ export default function LoungeManager() {
                   )}
 
                   {/* Quick Controls */}
-                  <div className="grid grid-cols-3 gap-2 mt-4">
-                    <button
-                      onClick={() => currentBlock.peopleCount < 4 && addPerson(session.id)}
-                      disabled={currentBlock.peopleCount >= 4}
-                      className={`py-2.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition-colors ${currentBlock.peopleCount >= 4
-                          ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50 cursor-not-allowed'
-                          : 'bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400'
-                        }`}
-                    >
-                      <Plus className="w-4 h-4" />
-                      Person
-                    </button>
-                    <button
-                      onClick={() => setAddingItemsFor(session.id)}
-                      className="bg-zinc-800 hover:bg-zinc-700 text-white py-2.5 rounded-xl text-xs font-medium flex flex-col items-center justify-center gap-1 transition-colors"
-                    >
-                      <ShoppingCart className="w-4 h-4 text-emerald-400" />
-                      Items
-                    </button>
-                    <button
-                      onClick={() => setEndingSessionFor(session.id)}
-                      className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/50 text-red-500 py-2.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-1 transition-colors"
-                    >
-                      <Square className="w-4 h-4" fill="currentColor" />
-                      END
-                    </button>
+                  <div className="space-y-2 mt-4">
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        onClick={() => currentBlock.peopleCount < 4 && addPerson(session.id)}
+                        disabled={currentBlock.peopleCount >= 4}
+                        className={`py-2.5 rounded-xl text-[10px] font-bold flex flex-col items-center justify-center gap-1 transition-colors ${currentBlock.peopleCount >= 4
+                            ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50'
+                            : 'bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400'
+                          }`}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        +1 Player
+                      </button>
+                      <button
+                        onClick={() => currentBlock.peopleCount > 1 && removePerson(session.id)}
+                        disabled={currentBlock.peopleCount <= 1}
+                        className={`py-2.5 rounded-xl text-[10px] font-bold flex flex-col items-center justify-center gap-1 transition-colors ${currentBlock.peopleCount <= 1
+                            ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50'
+                            : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
+                          }`}
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                        -1 Player
+                      </button>
+                      <button
+                        onClick={() => currentBlock.peopleCount > 2 && removeTwoPeople(session.id)}
+                        disabled={currentBlock.peopleCount <= 2}
+                        className={`py-2.5 rounded-xl text-[10px] font-bold flex flex-col items-center justify-center gap-1 transition-colors ${currentBlock.peopleCount <= 2
+                            ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50'
+                            : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
+                          }`}
+                      >
+                        <div className="flex">
+                          <Minus className="w-3 h-3" />
+                          <Minus className="w-3 h-3 -ml-1" />
+                        </div>
+                        -2 Players
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setAddingItemsFor(session.id)}
+                        className="bg-zinc-800 hover:bg-zinc-700 text-white py-3 rounded-xl text-xs font-medium flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <ShoppingCart className="w-4 h-4 text-emerald-400" />
+                        Items
+                      </button>
+                      <button
+                        onClick={() => setEndingSessionFor(session.id)}
+                        className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/50 text-red-500 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <Square className="w-4 h-4" fill="currentColor" />
+                        END SESSION
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
