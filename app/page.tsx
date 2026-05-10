@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Play, Square, Plus, ShoppingCart, Clock, History, LayoutDashboard, Wallet, CreditCard, ChevronLeft, Users, LogOut } from 'lucide-react';
+import { Play, Square, Plus, Minus, Trash2, ShoppingCart, Clock, History, LayoutDashboard, Wallet, CreditCard, ChevronLeft, Users, LogOut } from 'lucide-react';
 import { auth } from '../lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
@@ -230,6 +230,37 @@ export default function LoungeManager() {
     }));
   };
 
+  const incrementItemQuantity = (sessionId: string, itemId: string) => {
+    addItem(sessionId, itemId);
+  };
+
+  const decrementItemQuantity = (sessionId: string, itemId: string) => {
+    setSessions(sessions.map(s => {
+      if (s.id === sessionId) {
+        const currentQty = s.items[itemId] || 0;
+        const newItems = { ...s.items };
+        if (currentQty <= 1) {
+          delete newItems[itemId];
+        } else {
+          newItems[itemId] = currentQty - 1;
+        }
+        return { ...s, items: newItems };
+      }
+      return s;
+    }));
+  };
+
+  const removeItem = (sessionId: string, itemId: string) => {
+    setSessions(sessions.map(s => {
+      if (s.id === sessionId) {
+        const newItems = { ...s.items };
+        delete newItems[itemId];
+        return { ...s, items: newItems };
+      }
+      return s;
+    }));
+  };
+
   const endSession = (sessionId: string, paymentMethod: 'Cash' | 'UPI') => {
     const session = sessions.find(s => s.id === sessionId);
     if (!session) return;
@@ -323,6 +354,47 @@ export default function LoungeManager() {
                       {hasHH && <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full uppercase font-bold tracking-wider mt-1">HH Applied</span>}
                     </div>
                   </div>
+
+                  {/* Items List */}
+                  {Object.entries(session.items).length > 0 && (
+                    <div className="mt-4 space-y-2 border-t border-zinc-800 pt-3">
+                      {Object.entries(session.items).map(([itemId, qty]) => {
+                        const item = items.find(i => i.id === itemId);
+                        if (!item) return null;
+                        return (
+                          <div key={itemId} className="flex items-center justify-between bg-zinc-950/50 p-2 rounded-lg border border-zinc-800/30">
+                            <div className="flex flex-col">
+                              <span className="text-white text-xs font-medium">{item.name}</span>
+                              <span className="text-yellow-400 text-[10px] font-mono">₹{item.price * (qty as number)}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center bg-zinc-900 rounded-lg border border-zinc-800 p-1">
+                                <button 
+                                  onClick={() => decrementItemQuantity(session.id, itemId)}
+                                  className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
+                                >
+                                  <Minus className="w-3 h-3" />
+                                </button>
+                                <span className="text-white text-xs font-bold w-6 text-center">{qty as number}</span>
+                                <button 
+                                  onClick={() => incrementItemQuantity(session.id, itemId)}
+                                  className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              </div>
+                              <button 
+                                onClick={() => removeItem(session.id, itemId)}
+                                className="p-2 text-zinc-500 hover:text-red-400 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   {/* Quick Controls */}
                   <div className="grid grid-cols-3 gap-2 mt-4">
