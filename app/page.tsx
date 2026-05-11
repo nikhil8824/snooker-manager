@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Play, Square, Plus, Minus, Trash2, ShoppingCart, Clock, History, LayoutDashboard, Wallet, CreditCard, ChevronLeft, Users, LogOut } from 'lucide-react';
 import { auth } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
+import { ShieldAlert, LogOut, LayoutDashboard, History, Play, Square, Users, Clock, ShoppingCart, Plus, Minus, Trash2, Wallet, CreditCard, ChevronLeft } from 'lucide-react';
 
 const UNITS = [
   { id: 's1', name: 'Snooker Table 1', type: 'Snooker', rateStr: '₹240/hr' },
@@ -141,19 +142,64 @@ const formatTimeRange = (start: number, end: number) => {
   return `${s} - ${e}`;
 }
 
+// Constants for staging/dev bypass
+const DEV_MOCK_BUSINESS = {
+  id: '00000000-0000-0000-0000-000000000000',
+  name: 'HQ Lounge (Staging)',
+};
+
+const isDevelopment = () => {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.includes('staging')
+  );
+};
+
 export default function LoungeManager() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'live' | 'summary'>('live');
   const [now, setNow] = useState(Date.now());
   const [isMounted, setIsMounted] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [business, setBusiness] = useState<any>(null);
+  const [isAuthorizing, setIsAuthorizing] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (!user) {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) {
+        setUser(null);
         router.push('/login');
       } else {
-        setIsAuthenticated(true);
+        setUser(firebaseUser);
+
+        // Verify business ownership via phone number
+        const phone = firebaseUser.phoneNumber;
+        if (phone) {
+          try {
+            // Exact phone number matching from Firebase (E.164)
+            const { data, error } = await supabase
+              .from('users')
+              .select('*, businesses(*)')
+              .eq('phone', phone)
+              .single();
+
+            if (data && data.businesses) {
+              setBusiness(data.businesses);
+            } else if (isDevelopment()) {
+              // Safety fallback for Localhost/Staging
+              console.warn("User authenticated but not found in Supabase. Applying development mock business.");
+              setBusiness(DEV_MOCK_BUSINESS);
+            }
+          } catch (err) {
+            console.error("Auth verification error:", err);
+            if (isDevelopment()) {
+              setBusiness(DEV_MOCK_BUSINESS);
+            }
+          }
+        }
+        setIsAuthorizing(false);
       }
     });
 
@@ -195,7 +241,35 @@ export default function LoungeManager() {
     return () => clearInterval(interval);
   }, []);
 
-  if (!isMounted || !isAuthenticated) return null;
+  if (!isMounted || !user || isAuthorizing) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6">
+        <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+        <p className="mt-4 text-zinc-500 text-sm animate-pulse">Loading Workspace...</p>
+      </div>
+    );
+  }
+
+  // Unauthorized State
+  if (!business) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-8 text-center">
+        <div className="w-20 h-20 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mb-6">
+          <ShieldAlert className="w-10 h-10" />
+        </div>
+        <h1 className="text-2xl font-bold text-white mb-2">Access Not Approved</h1>
+        <p className="text-zinc-500 text-sm max-w-xs mb-8">
+          Your phone number is authenticated but not registered to any business. Please contact the administrator for access.
+        </p>
+        <button
+          onClick={() => signOut(auth)}
+          className="bg-zinc-900 hover:bg-zinc-800 text-white px-8 py-4 rounded-xl font-bold transition-all border border-zinc-800"
+        >
+          Logout & Try Again
+        </button>
+      </div>
+    );
+  }
 
   const startSession = (unitId: string) => {
     setSessions([...sessions, {
@@ -331,7 +405,7 @@ export default function LoungeManager() {
       {/* Header */}
       <div className="bg-zinc-900 border-b border-zinc-800 p-4 sticky top-0 z-10 flex justify-between items-center shadow-md">
         <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">HQ Lounge</h1>
+          <h1 className="text-xl font-bold text-white tracking-tight">{business?.name || 'HQ Lounge'}</h1>
           <p className="text-xs text-zinc-400">
             {isCurrentlyHappyHour ? (
               <span className="text-yellow-400 font-medium flex items-center gap-1">
@@ -399,21 +473,21 @@ export default function LoungeManager() {
                             </div>
                             <div className="flex items-center gap-2">
                               <div className="flex items-center bg-zinc-900 rounded-lg border border-zinc-800 p-1">
-                                <button 
+                                <button
                                   onClick={() => decrementItemQuantity(session.id, itemId)}
                                   className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
                                 >
                                   <Minus className="w-3 h-3" />
                                 </button>
                                 <span className="text-white text-xs font-bold w-6 text-center">{qty as number}</span>
-                                <button 
+                                <button
                                   onClick={() => incrementItemQuantity(session.id, itemId)}
                                   className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
                                 >
                                   <Plus className="w-3 h-3" />
                                 </button>
                               </div>
-                              <button 
+                              <button
                                 onClick={() => removeItem(session.id, itemId)}
                                 className="p-2 text-zinc-500 hover:text-red-400 transition-colors"
                               >
@@ -433,8 +507,8 @@ export default function LoungeManager() {
                         onClick={() => currentBlock.peopleCount < 4 && addPerson(session.id)}
                         disabled={currentBlock.peopleCount >= 4}
                         className={`py-2.5 rounded-xl text-[10px] font-bold flex flex-col items-center justify-center gap-1 transition-colors ${currentBlock.peopleCount >= 4
-                            ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50'
-                            : 'bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400'
+                          ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50'
+                          : 'bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400'
                           }`}
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -444,8 +518,8 @@ export default function LoungeManager() {
                         onClick={() => currentBlock.peopleCount > 1 && removePerson(session.id)}
                         disabled={currentBlock.peopleCount <= 1}
                         className={`py-2.5 rounded-xl text-[10px] font-bold flex flex-col items-center justify-center gap-1 transition-colors ${currentBlock.peopleCount <= 1
-                            ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50'
-                            : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
+                          ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50'
+                          : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
                           }`}
                       >
                         <Minus className="w-3.5 h-3.5" />
@@ -455,8 +529,8 @@ export default function LoungeManager() {
                         onClick={() => currentBlock.peopleCount > 2 && removeTwoPeople(session.id)}
                         disabled={currentBlock.peopleCount <= 2}
                         className={`py-2.5 rounded-xl text-[10px] font-bold flex flex-col items-center justify-center gap-1 transition-colors ${currentBlock.peopleCount <= 2
-                            ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50'
-                            : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
+                          ? 'bg-zinc-800/50 text-zinc-600 border border-zinc-800/50'
+                          : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
                           }`}
                       >
                         <div className="flex">

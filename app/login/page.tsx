@@ -4,12 +4,23 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RecaptchaVerifier, signInWithPhoneNumber, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
+import { supabase } from '../../lib/supabase';
+import { ShieldAlert } from 'lucide-react';
 
 declare global {
   interface Window {
     recaptchaVerifier: RecaptchaVerifier;
   }
 }
+
+const isDevelopment = () => {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.includes('staging')
+  );
+};
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,14 +29,38 @@ export default function LoginPage() {
   const [step, setStep] = useState<'PHONE_INPUT' | 'OTP_INPUT' | 'SUCCESS'>('PHONE_INPUT');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
 
   // To hold the confirmation result object from firebase
   const [confirmationResult, setConfirmationResult] = useState<any>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        router.push('/');
+        // Double check authorization
+        const phone = user.phoneNumber;
+        if (phone) {
+          try {
+            const { data } = await supabase
+              .from('users')
+              .select('id')
+              .eq('phone', phone)
+              .single();
+            
+            if (data || isDevelopment()) {
+              router.push('/');
+            } else {
+              setIsAuthorized(false);
+            }
+          } catch (err) {
+            console.error("Auth check error:", err);
+            if (isDevelopment()) {
+              router.push('/');
+            } else {
+              setIsAuthorized(false);
+            }
+          }
+        }
       }
     });
 
@@ -34,11 +69,31 @@ export default function LoginPage() {
 
   useEffect(() => {
     // Setup recaptcha verifier on mount
-    if (typeof window !== 'undefined' && !window.recaptchaVerifier) {
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible',
-      });
-    }
+    const setupVerifier = () => {
+      if (typeof window !== 'undefined' && !window.recaptchaVerifier) {
+        try {
+          window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+            size: 'invisible',
+          });
+        } catch (err) {
+          console.error("Failed to initialize reCAPTCHA:", err);
+        }
+      }
+    };
+
+    setupVerifier();
+
+    return () => {
+      if (window.recaptchaVerifier) {
+        try {
+          window.recaptchaVerifier.clear();
+          // @ts-ignore
+          window.recaptchaVerifier = null;
+        } catch (err) {
+          console.error("Failed to clear reCAPTCHA:", err);
+        }
+      }
+    };
   }, []);
 
   const handleSendOtp = async (e: React.FormEvent) => {
@@ -50,6 +105,14 @@ export default function LoginPage() {
 
     try {
       const formattedPhone = phoneNumber.startsWith('+') ? phoneNumber : `+91${phoneNumber}`;
+      
+      // Lazy initialization fallback if verifier was cleared or not ready
+      if (!window.recaptchaVerifier) {
+        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+          size: 'invisible',
+        });
+      }
+      
       const appVerifier = window.recaptchaVerifier;
       const confirmation = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
 
@@ -161,6 +224,18 @@ export default function LoginPage() {
             </div>
             <h2 className="text-xl font-bold text-white">Login Successful</h2>
             <p className="text-zinc-400 text-sm">Redirecting to dashboard...</p>
+          </div>
+        )}
+
+        {isAuthorized === false && (
+          <div className="mt-8 pt-8 border-t border-zinc-800 text-center animate-in fade-in slide-in-from-top-2">
+            <div className="w-12 h-12 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+              <ShieldAlert className="w-6 h-6" />
+            </div>
+            <h2 className="text-lg font-bold text-white mb-2">Access Not Approved</h2>
+            <p className="text-zinc-500 text-xs px-4">
+              Your phone number is authenticated but not registered to any business.
+            </p>
           </div>
         )}
       </div>
