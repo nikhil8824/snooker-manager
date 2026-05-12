@@ -2,144 +2,72 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { RecaptchaVerifier, signInWithPhoneNumber, onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../../lib/firebase';
 import { supabase } from '../../lib/supabase';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, User, Lock, Mail, Phone } from 'lucide-react';
 
-declare global {
-  interface Window {
-    recaptchaVerifier: RecaptchaVerifier;
-  }
-}
-
-const isDevelopment = () => {
-  if (typeof window === 'undefined') return false;
-  return (
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1' ||
-    window.location.hostname.includes('staging')
-  );
-};
 
 export default function LoginPage() {
   const router = useRouter();
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [otp, setOtp] = useState('');
-  const [step, setStep] = useState<'PHONE_INPUT' | 'OTP_INPUT' | 'SUCCESS'>('PHONE_INPUT');
+  const [identifier, setIdentifier] = useState(''); // Email or Phone
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
 
-  // To hold the confirmation result object from firebase
-  const [confirmationResult, setConfirmationResult] = useState<any>(null);
-
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        // Double check authorization
-        const phone = user.phoneNumber;
-        if (phone) {
-          try {
-            const { data } = await supabase
-              .from('users')
-              .select('id')
-              .eq('phone', phone)
-              .single();
-            
-            if (data || isDevelopment()) {
-              router.push('/');
-            } else {
-              setIsAuthorized(false);
-            }
-          } catch (err) {
-            console.error("Auth check error:", err);
-            if (isDevelopment()) {
-              router.push('/');
-            } else {
-              setIsAuthorized(false);
-            }
-          }
-        }
+    // Check for existing session
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        router.push('/');
       }
-    });
-
-    return () => unsubscribe();
+    };
+    checkSession();
   }, [router]);
 
-  useEffect(() => {
-    // Setup recaptcha verifier on mount
-    const setupVerifier = () => {
-      if (typeof window !== 'undefined' && !window.recaptchaVerifier) {
-        try {
-          window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-            size: 'invisible',
-          });
-        } catch (err) {
-          console.error("Failed to initialize reCAPTCHA:", err);
-        }
-      }
-    };
-
-    setupVerifier();
-
-    return () => {
-      if (window.recaptchaVerifier) {
-        try {
-          window.recaptchaVerifier.clear();
-          // @ts-ignore
-          window.recaptchaVerifier = null;
-        } catch (err) {
-          console.error("Failed to clear reCAPTCHA:", err);
-        }
-      }
-    };
-  }, []);
-
-  const handleSendOtp = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!phoneNumber) return;
+    if (!identifier || !password) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const formattedPhone = phoneNumber.startsWith('+') ? phoneNumber : `+91${phoneNumber}`;
-      
-      // Lazy initialization fallback if verifier was cleared or not ready
-      if (!window.recaptchaVerifier) {
-        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-          size: 'invisible',
-        });
+      // Determine if identifier is email or phone
+      const isEmail = identifier.includes('@');
+      let loginParams: any = { password };
+
+      if (isEmail) {
+        loginParams.email = identifier;
+      } else {
+        // Simple phone formatting: if it doesn't start with +, assume +91
+        const formattedPhone = identifier.startsWith('+') ? identifier : `+91${identifier.replace(/[^0-9]/g, '')}`;
+        loginParams.phone = formattedPhone;
       }
-      
-      const appVerifier = window.recaptchaVerifier;
-      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
 
-      setConfirmationResult(confirmation);
-      setStep('OTP_INPUT');
+      const { data, error: authError } = await supabase.auth.signInWithPassword(loginParams);
+
+      if (authError) throw authError;
+
+      if (data.user) {
+        // Double check authorization in public.users table
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('id')
+          .eq('id', data.user.id)
+          .single();
+        
+        if (userData) {
+          router.push('/');
+        } else {
+          setIsAuthorized(false);
+          // Optionally sign out if not authorized
+          await supabase.auth.signOut();
+        }
+      }
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Failed to send OTP. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!otp || !confirmationResult) return;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      await confirmationResult.confirm(otp);
-      setStep('SUCCESS');
-      router.push('/');
-    } catch (err: any) {
-      console.error(err);
-      setError('Invalid OTP. Please try again.');
+      console.error("Login error:", err);
+      setError(err.message || 'Invalid credentials. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -157,75 +85,49 @@ export default function LoginPage() {
           </div>
         )}
 
-        <div id="recaptcha-container"></div>
-
-        {step === 'PHONE_INPUT' && (
-          <form onSubmit={handleSendOtp} className="space-y-4">
-            <div>
-              <label className="block text-xs text-zinc-400 uppercase tracking-widest mb-2 ml-1">Phone Number</label>
-              <div className="flex bg-zinc-950 border border-zinc-800 focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500 rounded-xl overflow-hidden transition-all">
-                <span className="pl-4 py-4 text-zinc-500 font-medium">+91</span>
-                <input
-                  type="tel"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value.replace(/[^0-9]/g, '').slice(0, 10))}
-                  placeholder="9876543210"
-                  required
-                  className="w-full bg-transparent px-3 py-4 text-white placeholder:text-zinc-600 outline-none text-lg"
-                />
-              </div>
-            </div>
-            <button
-              type="submit"
-              disabled={loading || phoneNumber.length < 10}
-              className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-zinc-950 font-bold text-lg py-4 rounded-xl transition-all active:scale-[0.98]"
-            >
-              {loading ? 'Sending OTP...' : 'Send OTP'}
-            </button>
-          </form>
-        )}
-
-        {step === 'OTP_INPUT' && (
-          <form onSubmit={handleVerifyOtp} className="space-y-4">
-            <div>
-              <label className="block text-xs text-zinc-400 uppercase tracking-widest mb-2 ml-1">Verification Code</label>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label className="block text-xs text-zinc-400 uppercase tracking-widest mb-2 ml-1">Phone or Email</label>
+            <div className="flex bg-zinc-950 border border-zinc-800 focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500 rounded-xl overflow-hidden transition-all items-center px-4">
+              {identifier.includes('@') ? (
+                <Mail className="w-5 h-5 text-zinc-500 mr-2" />
+              ) : (
+                <Phone className="w-5 h-5 text-zinc-500 mr-2" />
+              )}
               <input
                 type="text"
-                value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
-                placeholder="000000"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="Email or Phone number"
                 required
-                className="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-4 py-4 text-white text-center tracking-widest placeholder:text-zinc-600 transition-all outline-none text-2xl font-mono"
+                className="w-full bg-transparent py-4 text-white placeholder:text-zinc-600 outline-none text-lg"
               />
             </div>
-            <button
-              type="submit"
-              disabled={loading || otp.length < 6}
-              className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-zinc-950 font-bold text-lg py-4 rounded-xl transition-all active:scale-[0.98]"
-            >
-              {loading ? 'Verifying...' : 'Verify & Login'}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setStep('PHONE_INPUT'); setOtp(''); setError(null); }}
-              className="w-full text-zinc-500 text-sm font-medium hover:text-white transition-colors"
-            >
-              Change Phone Number
-            </button>
-          </form>
-        )}
-
-        {step === 'SUCCESS' && (
-          <div className="text-center space-y-4">
-            <div className="w-16 h-16 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-white">Login Successful</h2>
-            <p className="text-zinc-400 text-sm">Redirecting to dashboard...</p>
           </div>
-        )}
+
+          <div>
+            <label className="block text-xs text-zinc-400 uppercase tracking-widest mb-2 ml-1">Password</label>
+            <div className="flex bg-zinc-950 border border-zinc-800 focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500 rounded-xl overflow-hidden transition-all items-center px-4">
+              <Lock className="w-5 h-5 text-zinc-500 mr-2" />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                className="w-full bg-transparent py-4 text-white placeholder:text-zinc-600 outline-none text-lg"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || !identifier || !password}
+            className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-zinc-950 font-bold text-lg py-4 rounded-xl transition-all active:scale-[0.98] mt-4"
+          >
+            {loading ? 'Logging in...' : 'Sign In'}
+          </button>
+        </form>
 
         {isAuthorized === false && (
           <div className="mt-8 pt-8 border-t border-zinc-800 text-center animate-in fade-in slide-in-from-top-2">
@@ -234,11 +136,15 @@ export default function LoginPage() {
             </div>
             <h2 className="text-lg font-bold text-white mb-2">Access Not Approved</h2>
             <p className="text-zinc-500 text-xs px-4">
-              Your phone number is authenticated but not registered to any business.
+              Your account is authenticated but not registered to any business.
             </p>
           </div>
         )}
       </div>
+      
+      <p className="mt-8 text-zinc-600 text-xs text-center max-w-xs">
+        Secure access for lounge partners only. Contact administrator for credentials.
+      </p>
     </div>
   );
 }

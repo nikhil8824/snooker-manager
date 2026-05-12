@@ -1,9 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { auth } from '../lib/firebase';
 import { supabase } from '../lib/supabase';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import { ShieldAlert, LogOut, LayoutDashboard, History, Play, Square, Users, Clock, ShoppingCart, Plus, Minus, Trash2, Wallet, CreditCard, ChevronLeft } from 'lucide-react';
 
@@ -142,20 +140,6 @@ const formatTimeRange = (start: number, end: number) => {
   return `${s} - ${e}`;
 }
 
-// Constants for staging/dev bypass
-const DEV_MOCK_BUSINESS = {
-  id: '00000000-0000-0000-0000-000000000000',
-  name: 'HQ Lounge (Staging)',
-};
-
-const isDevelopment = () => {
-  if (typeof window === 'undefined') return false;
-  return (
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1' ||
-    window.location.hostname.includes('staging')
-  );
-};
 
 export default function LoungeManager() {
   const router = useRouter();
@@ -167,43 +151,63 @@ export default function LoungeManager() {
   const [isAuthorizing, setIsAuthorizing] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!firebaseUser) {
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
         setUser(null);
         router.push('/login');
-      } else {
-        setUser(firebaseUser);
+        return;
+      }
 
-        // Verify business ownership via phone number
-        const phone = firebaseUser.phoneNumber;
-        if (phone) {
-          try {
-            // Exact phone number matching from Firebase (E.164)
-            const { data, error } = await supabase
-              .from('users')
-              .select('*, businesses(*)')
-              .eq('phone', phone)
-              .single();
+      const supabaseUser = session.user;
+      setUser(supabaseUser);
 
-            if (data && data.businesses) {
-              setBusiness(data.businesses);
-            } else if (isDevelopment()) {
-              // Safety fallback for Localhost/Staging
-              console.warn("User authenticated but not found in Supabase. Applying development mock business.");
-              setBusiness(DEV_MOCK_BUSINESS);
-            }
-          } catch (err) {
-            console.error("Auth verification error:", err);
-            if (isDevelopment()) {
-              setBusiness(DEV_MOCK_BUSINESS);
-            }
-          }
+      try {
+        // Step 1: Find user row
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('business_id')
+          .eq('id', supabaseUser.id)
+          .single();
+
+        if (userError || !userData) {
+          throw userError || new Error("User not found in users table");
         }
-        setIsAuthorizing(false);
+
+        // Step 2: Find business row
+        const { data: businessData, error: businessError } = await supabase
+          .from('businesses')
+          .select('*')
+          .eq('id', userData.business_id)
+          .single();
+
+        if (businessError || !businessData) {
+          throw businessError || new Error("Business not found");
+        }
+
+        setBusiness(businessData);
+
+      } catch (err) {
+        console.error("AUTH VERIFICATION ERROR:", err);
+        // Explicitly set business to null to trigger unauthorized state
+        setBusiness(null);
+      }
+      setIsAuthorizing(false);
+    };
+
+    checkUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        setUser(null);
+        router.push('/login');
+      } else if (session) {
+        setUser(session.user);
       }
     });
 
-    return () => unsubscribe();
+    return () => subscription.unsubscribe();
   }, [router]);
 
   const [items, setItems] = useState<any[]>(INITIAL_ITEMS);
@@ -217,24 +221,46 @@ export default function LoungeManager() {
   const [isAddingCustomItem, setIsAddingCustomItem] = useState(false);
   const [customItemName, setCustomItemName] = useState('');
   const [customItemPrice, setCustomItemPrice] = useState('');
+  const [loadedBusinessId, setLoadedBusinessId] = useState<string | null>(null);
 
+  // One-time legacy storage cleanup
   useEffect(() => {
-    const s = localStorage.getItem('snooker_sessions');
-    const h = localStorage.getItem('snooker_history');
-    const i = localStorage.getItem('snooker_items');
-    if (s) setSessions(JSON.parse(s));
-    if (h) setHistory(JSON.parse(h));
-    if (i) setItems(JSON.parse(i));
-    setIsMounted(true);
+    const legacyKeys = [
+      'snooker_sessions',
+      'snooker_history',
+      'snooker_items',
+      'gaming-lounge-mvp-v2',
+      'snooker_sessions_00000000-0000-0000-0000-000000000000',
+      'snooker_history_00000000-0000-0000-0000-000000000000',
+      'snooker_items_00000000-0000-0000-0000-000000000000'
+    ];
+    legacyKeys.forEach(key => localStorage.removeItem(key));
   }, []);
 
   useEffect(() => {
-    if (isMounted) {
-      localStorage.setItem('snooker_sessions', JSON.stringify(sessions));
-      localStorage.setItem('snooker_history', JSON.stringify(history));
-      localStorage.setItem('snooker_items', JSON.stringify(items));
+    if (!business) return;
+
+    const busId = business.id;
+    const s = localStorage.getItem(`snooker_sessions_${busId}`);
+    const h = localStorage.getItem(`snooker_history_${busId}`);
+    const i = localStorage.getItem(`snooker_items_${busId}`);
+
+    setSessions(s ? JSON.parse(s) : []);
+    setHistory(h ? JSON.parse(h) : []);
+    setItems(i ? JSON.parse(i) : INITIAL_ITEMS);
+
+    setLoadedBusinessId(busId);
+    setIsMounted(true);
+  }, [business]);
+
+  useEffect(() => {
+    if (isMounted && business && loadedBusinessId === business.id) {
+      const busId = business.id;
+      localStorage.setItem(`snooker_sessions_${busId}`, JSON.stringify(sessions));
+      localStorage.setItem(`snooker_history_${busId}`, JSON.stringify(history));
+      localStorage.setItem(`snooker_items_${busId}`, JSON.stringify(items));
     }
-  }, [sessions, history, items, isMounted]);
+  }, [sessions, history, items, isMounted, business, loadedBusinessId]);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 1000);
@@ -262,7 +288,7 @@ export default function LoungeManager() {
           Your phone number is authenticated but not registered to any business. Please contact the administrator for access.
         </p>
         <button
-          onClick={() => signOut(auth)}
+          onClick={() => supabase.auth.signOut()}
           className="bg-zinc-900 hover:bg-zinc-800 text-white px-8 py-4 rounded-xl font-bold transition-all border border-zinc-800"
         >
           Logout & Try Again
@@ -417,7 +443,7 @@ export default function LoungeManager() {
             )}
           </p>
         </div>
-        <button onClick={() => signOut(auth)} className="text-zinc-400 hover:text-white transition-colors p-2">
+        <button onClick={() => supabase.auth.signOut()} className="text-zinc-400 hover:text-white transition-colors p-2">
           <LogOut className="w-5 h-5" />
         </button>
       </div>

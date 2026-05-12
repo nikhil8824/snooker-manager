@@ -11,7 +11,8 @@ CREATE TABLE public.businesses (
 CREATE TABLE public.users (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   business_id UUID REFERENCES public.businesses(id) ON DELETE CASCADE,
-  phone TEXT UNIQUE NOT NULL,
+  phone TEXT UNIQUE, -- Nullable to support email-only users
+  email TEXT UNIQUE, -- Added for email + password support
   role TEXT DEFAULT 'owner',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
